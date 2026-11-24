@@ -23,3 +23,10 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# local working artifacts
+data/
+.browser-libs/
+.tmpfont/
+scratch/
+upload_probe.mp4

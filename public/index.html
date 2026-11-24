@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>逐行重复帧节奏恢复</title>
+  <link rel="stylesheet" href="/fonts.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>逐行重复帧节奏恢复</h1>
+        <p>估计低帧率源画面的更新节奏，去除人为重复并生成保留原始事件时间的新视频</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="btn-help" class="ghost" type="button">说明</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <h2>素材</h2>
+        <div class="row gap">
+          <label class="file-pick">
+            <input id="file-input" type="file" accept="video/*" hidden />
+            <span>选择本地视频</span>
+          </label>
+        </div>
+        <label class="field">
+          <span>内置测试素材</span>
+          <select id="sample-select">
+            <option value="">加载素材列表…</option>
+          </select>
+        </label>
+        <div id="sample-note" class="hint"></div>
+      </section>
+
+      <section class="panel">
+        <h2>片段</h2>
+        <div class="field-inline">
+          <label class="field">
+            <span>开始（秒）</span>
+            <input id="seg-start" type="number" min="0" step="0.01" value="0" />
+          </label>
+          <label class="field">
+            <span>结束（秒）</span>
+            <input id="seg-end" type="number" min="0" step="0.01" value="0" />
+          </label>
+        </div>
+        <div class="hint" id="duration-hint">未加载素材</div>
+        <div class="row gap wrap">
+          <button id="btn-analyze" class="primary" type="button" disabled>分析节奏</button>
+          <button id="btn-render" class="accent" type="button" disabled>恢复并重封装</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>节奏假设</h2>
+        <label class="field">
+          <span>源帧率类型</span>
+          <select id="preset-select"></select>
+        </label>
+        <label class="check">
+          <input id="keep-uncertain" type="checkbox" checked />
+          <span>证据不足时保留不确定区（推荐）</span>
+        </label>
+        <label class="check">
+          <input id="keep-audio" type="checkbox" checked />
+          <span>保留原音轨并对应原事件时间</span>
+        </label>
+      </section>
+
+      <section class="panel status-panel" id="status-panel">
+        <h2>状态</h2>
+        <div class="status-line"><span id="status-dot" class="dot"></span><span id="status-text">等待素材</span></div>
+        <div class="progress"><div id="progress-bar"></div></div>
+        <div class="hint" id="status-detail"></div>
+        <ul id="error-list" class="errors"></ul>
+      </section>
+    </aside>
+
+    <div class="content">
+      <section class="panel player-panel">
+        <div class="player-head">
+          <h2>运动分析播放器</h2>
+          <div class="player-modes" role="group" aria-label="播放模式">
+            <button data-mode="source" class="mode active" type="button">原片</button>
+            <button data-mode="kept" class="mode" type="button" disabled>保留帧</button>
+            <button data-mode="result" class="mode" type="button" disabled>结果</button>
+          </div>
+        </div>
+        <div class="player-body">
+          <div class="video-wrap">
+            <video id="video" playsinline preload="auto"></video>
+            <div id="video-empty" class="video-empty">尚无素材</div>
+            <canvas id="motion-canvas"></canvas>
+            <div class="video-overlay">
+              <span id="ov-mode" class="badge">原片</span>
+              <span id="ov-time" class="badge mono">0.000 s</span>
+              <span id="ov-frame" class="badge mono">帧 —</span>
+              <span id="ov-action" class="badge action">—</span>
+            </div>
+          </div>
+          <div class="timeline-wrap">
+            <canvas id="timeline" height="96"></canvas>
+            <div class="timeline-legend">
+              <span><i class="sw keep"></i>保留</span>
+              <span><i class="sw drop"></i>复制的重复帧</span>
+              <span><i class="sw static"></i>真实静止（保留时长）</span>
+              <span><i class="sw uncertain"></i>不确定（保留）</span>
+            </div>
+          </div>
+          <div class="controls">
+            <button id="btn-play" class="icon" type="button" aria-label="播放">▶</button>
+            <input id="scrub" type="range" min="0" max="1000" value="0" />
+            <span id="time-readout" class="mono">0.000 / 0.000</span>
+            <div class="speed">
+              <button data-speed="0.25" type="button">¼×</button>
+              <button data-speed="0.5" type="button">½×</button>
+              <button data-speed="1" class="active" type="button">1×</button>
+            </div>
+            <label class="check compact">
+              <input id="step-keep" type="checkbox" />
+              <span>逐保留帧</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="rhythm-panel">
+        <div class="panel-head">
+          <h2>节奏相位与判断依据</h2>
+          <span id="evidence-tag" class="tag">未分析</span>
+        </div>
+        <div class="rhythm-grid">
+          <div class="metric">
+            <span class="metric-label">估计源帧率</span>
+            <strong id="m-source-fps">—</strong>
+            <span class="metric-sub" id="m-source-label">—</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">重复模式</span>
+            <strong id="m-pattern" class="mono">—</strong>
+            <span class="metric-sub" id="m-phase">相位 —</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">节奏匹配</span>
+            <strong id="m-confidence">—</strong>
+            <span class="metric-sub" id="m-coverage">覆盖 —</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">保留 / 总帧</span>
+            <strong id="m-kept">—</strong>
+            <span class="metric-sub" id="m-static">静止段 —</span>
+          </div>
+        </div>
+        <div class="phase-visual">
+          <div class="phase-head">
+            <span>节奏相位条（每格 = 一个源帧的重复次数）</span>
+            <span id="phase-scale" class="hint"></span>
+          </div>
+          <div id="phase-strip" class="phase-strip"></div>
+        </div>
+        <div class="evidence-grid">
+          <div>
+            <h3>判定阈值（复制簇与更新簇之间）</h3>
+            <div class="bar-chart" id="threshold-chart"></div>
+            <p class="hint" id="threshold-detail">—</p>
+          </div>
+          <div>
+            <h3>候选节奏</h3>
+            <table class="cand-table">
+              <thead><tr><th>假设</th><th>模式</th><th>匹配</th><th>覆盖</th></tr></thead>
+              <tbody id="cand-body"><tr><td colspan="4" class="hint">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="reason-box">
+          <h3>结论与依据</h3>
+          <p id="rhythm-reason">尚未分析。</p>
+          <ul id="notes-list" class="notes"></ul>
+          <ul id="warn-list" class="warnings"></ul>
+        </div>
+      </section>
+
+      <section class="panel" id="runs-panel">
+        <div class="panel-head">
+          <h2>区间与候选帧解释</h2>
+          <span class="hint" id="runs-hint">每个被丢弃的候选帧都有原因</span>
+        </div>
+        <div class="runs-table-wrap">
+          <table class="runs-table">
+            <thead>
+              <tr>
+                <th>区间</th><th>原时间</th><th>帧数</th><th>节奏预期</th><th>相位</th>
+                <th>判断依据</th><th>处理</th><th>置信</th>
+              </tr>
+            </thead>
+            <tbody id="runs-body">
+              <tr><td colspan="8" class="hint">尚未分析。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <details class="frame-details">
+          <summary>逐帧判定明细（保留帧与丢弃候选）</summary>
+          <div class="runs-table-wrap">
+            <table class="runs-table frames-table">
+              <thead><tr><th>帧号</th><th>原时间</th><th>差异</th><th>运动增益</th><th>处理</th><th>说明</th></tr></thead>
+              <tbody id="frames-body"></tbody>
+            </table>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel" id="result-panel">
+        <div class="panel-head">
+          <h2>恢复结果</h2>
+          <span class="tag" id="result-tag">未生成</span>
+        </div>
+        <div class="result-grid">
+          <div class="result-video">
+            <video id="result-video" controls playsinline preload="metadata"></video>
+            <div id="result-empty" class="video-empty small">重封装后在此播放</div>
+          </div>
+          <div class="result-side">
+            <div class="result-headline">
+              <span class="metric-label">保留帧</span>
+              <strong id="r-kept">—</strong>
+              <span class="hint" id="r-kept-sub">—</span>
+            </div>
+            <div class="result-headline">
+              <span class="metric-label">播放时间（与原事件对应）</span>
+              <strong id="r-duration">—</strong>
+              <span class="hint" id="r-duration-sub">—</span>
+            </div>
+            <div class="result-headline">
+              <span class="metric-label">音频</span>
+              <strong id="r-audio">—</strong>
+              <span class="hint" id="r-audio-sub">—</span>
+            </div>
+            <div class="row gap wrap">
+              <a id="download-link" class="accent disabled" href="#" download>下载结果</a>
+              <button id="btn-reveal" class="ghost" type="button" disabled>定位到结果</button>
+            </div>
+            <ul id="verify-list" class="notes"></ul>
+          </div>
+        </div>
+        <div class="kept-table-wrap">
+          <h3>保留帧与实际播放时间（按运算结果）</h3>
+          <div class="runs-table-wrap tall">
+            <table class="runs-table kept-table">
+              <thead><tr><th>源帧号</th><th>原事件时间</th><th>显示开始</th><th>显示结束</th><th>显示时长</th><th>相位</th><th>输出实测 PTS</th></tr></thead>
+              <tbody id="kept-body"><tr><td colspan="7" class="hint">尚未生成结果。</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="help-dialog">
+    <h2>使用说明</h2>
+    <p>本工具面向“低帧率素材被重复输出成高帧率”的序列：估计源画面更新节奏，去除人为复制，并按原始事件时间重新封装。</p>
+    <ul>
+      <li>选择内置测试素材或上传本地视频，指定要恢复的片段。</li>
+      <li>“分析节奏”会逐帧计算差异、空间结构与运动补偿增益，拟合声明的节奏类型，并标出静止停顿与不确定区。</li>
+      <li>“恢复并重封装”按原时间戳保留每个源帧，丢弃复制的重复帧；原音轨流复制写入，声音与画面事件时间保持对应。</li>
+      <li>若画面全静止或证据不足，会保留多解节奏与完整时长，不会把静止时间压缩掉。</li>
+      <li>输出并非仅修改容器帧率标签：视频逐帧按原 PTS 重编码，时间戳等于原片中的事件时间。</li>
+    </ul>
+    <p class="hint">命令行仅辅助节奏恢复与批处理，图形入口是本页面（详见 README）。</p>
+    <form method="dialog"><button class="primary" type="submit">知道了</button></form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
