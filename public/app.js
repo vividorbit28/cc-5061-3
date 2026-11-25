@@ -81,6 +81,22 @@ const el = {
   keptBody: $("#kept-body"),
   helpDialog: $("#help-dialog"),
   btnHelp: $("#btn-help"),
+  diagTag: $("#diag-tag"),
+  diagVerdict: $("#diag-verdict"),
+  diagCategory: $("#diag-category"),
+  diagDetail: $("#diag-detail"),
+  diagDetectRule: $("#diag-detect-rule"),
+  diagDetectCounts: $("#diag-detect-counts"),
+  diagCadenceRule: $("#diag-cadence-rule"),
+  diagCadenceCounts: $("#diag-cadence-counts"),
+  diagAgreement: $("#diag-agreement"),
+  diagCandBody: $("#diag-cand-body"),
+  diagStages: $("#diag-stages"),
+  diagInvariants: $("#diag-invariants"),
+  diagStaticBlock: $("#diag-static-block"),
+  diagPhaseStory: $("#diag-phase-story"),
+  diagLinksBody: $("#diag-links-body"),
+  diagLinksWrap: $("#diag-links-wrap"),
 };
 
 const motionCtx = el.motion.getContext("2d");
@@ -290,7 +306,7 @@ function resetAnalysis() {
   el.warnList.innerHTML = "";
   el.runsBody.innerHTML = '<tr><td colspan="8" class="hint">尚未分析。</td></tr>';
   el.framesBody.innerHTML = "";
-  el.keptBody.innerHTML = '<tr><td colspan="6" class="hint">尚未生成结果。</td></tr>';
+  el.keptBody.innerHTML = '<tr><td colspan="8" class="hint">尚未生成结果。</td></tr>';
   el.resultTag.textContent = "未生成";
   el.resultTag.className = "tag";
   el.rKept.textContent = "—";
@@ -304,6 +320,21 @@ function resetAnalysis() {
   el.downloadLink.removeAttribute("href");
   el.btnReveal.disabled = true;
   el.errorList.innerHTML = "";
+  el.diagTag.textContent = "未分析";
+  el.diagTag.className = "tag";
+  el.diagVerdict.className = "diag-verdict";
+  el.diagCategory.textContent = "尚未分析。";
+  el.diagDetail.textContent = "追踪只读取分析结果，不会自行删除帧或改变待分析序列。";
+  el.diagDetectRule.textContent = "—";
+  el.diagDetectCounts.textContent = "—";
+  el.diagCadenceRule.textContent = "—";
+  el.diagCadenceCounts.textContent = "—";
+  el.diagAgreement.innerHTML = "";
+  el.diagCandBody.innerHTML = '<tr><td colspan="5" class="hint">—</td></tr>';
+  el.diagStages.innerHTML = "";
+  el.diagInvariants.textContent = "—";
+  el.diagPhaseStory.textContent = "—";
+  el.diagLinksBody.innerHTML = '<tr><td colspan="7" class="hint">尚未分析。</td></tr>';
   drawTimeline();
 }
 
@@ -456,6 +487,7 @@ function applyAnalysis(a) {
   }
   renderRuns(a);
   renderFrames(a);
+  renderDiagnosis(a);
   drawTimeline();
 
   document.querySelectorAll(".player-modes .mode").forEach((b) => {
@@ -567,9 +599,165 @@ function renderFrames(a) {
   }
 }
 
+/* ---------------- diagnosis (read-only trace) ---------------- */
+
+function renderDiagnosis(a) {
+  const d = a.diagnosis;
+  if (!d) {
+    el.diagTag.textContent = "无追踪";
+    el.diagTag.className = "tag warn";
+    return;
+  }
+  const rc = d.rootCause || {};
+  const label =
+    rc.category === "sufficient"
+      ? "证据充足"
+      : rc.category === "insufficient-observation"
+        ? "观测不足"
+        : rc.category === "implementation-misjudgment"
+          ? "实现误判"
+          : "未知";
+  el.diagTag.textContent = label;
+  el.diagTag.className =
+    "tag " + (rc.category === "sufficient" ? "ok" : rc.category === "implementation-misjudgment" ? "bad" : "warn");
+  el.diagVerdict.className = "diag-verdict category-" + (rc.category || "unknown");
+  el.diagCategory.textContent = `诊断：${label} · 阶段 ${rc.stage ?? "—"} · ${rc.code ?? "—"}`;
+  el.diagDetail.textContent = rc.explanation || rc.detail || "—";
+
+  const pc = d.pathComparison;
+  if (pc) {
+    el.diagDetectRule.textContent = pc.detectionEnd.rule;
+    el.diagDetectCounts.textContent = `${pc.detectionEnd.copies} 帧`;
+    el.diagCadenceRule.textContent = pc.cadenceBack.rule;
+    el.diagCadenceCounts.textContent = `${pc.cadenceBack.drops} 帧（另有 ${pc.cadenceBack.staticCollapses} 帧静止内合并）`;
+    const ag = pc.agreement;
+    const onlyCadence = ag.onlyCadence;
+    const onlyDetect = ag.onlyDetection;
+    el.diagAgreement.innerHTML =
+      `两路一致删除 <span class="agree">${ag.both}</span> 帧 · ` +
+      `仅节奏反推删除 <span class="${onlyCadence ? "diverge" : "agree"}">${onlyCadence}</span> 帧 · ` +
+      `仅检测端判复制但未删 <span class="${onlyDetect ? "diverge" : "agree"}">${onlyDetect}</span> 帧。` +
+      (onlyCadence
+        ? " 存在节奏反推删帧但检测端无对应复制证据，属实现误判，已定位到阶段。"
+        : " 两路删除集合一致。");
+  }
+
+  // Candidate support table (stage + implied source-frame mapping).
+  el.diagCandBody.innerHTML = "";
+  for (const c of (d.candidates || []).slice(0, 8)) {
+    const tr = document.createElement("tr");
+    if (c.isBest) tr.className = "best-row";
+    const segs = (c.phaseSegments || []).length;
+    const phaseNote = segs > 1 ? `<span class="phase-count">${segs} 段（相位重置）</span>` : `${segs} 段`;
+    tr.innerHTML = `<td>${escapeHtml(c.label)}</td><td class="mono">[${c.pattern.join(",")}]</td><td class="mono">${Math.round(c.support.score * 100)}%</td><td class="mono">${phaseNote}</td><td class="mono">${c.impliedMapping.kept} / ${c.impliedMapping.dropped}</td>`;
+    el.diagCandBody.appendChild(tr);
+  }
+  if (!(d.candidates || []).length) {
+    el.diagCandBody.innerHTML = '<tr><td colspan="5" class="hint">无候选</td></tr>';
+  }
+
+  // Execution evidence chain: stages and invariant verdict.
+  el.diagStages.innerHTML = "";
+  for (const st of d.stages || []) {
+    const li = document.createElement("li");
+    const ok = st.ok;
+    li.innerHTML = `<span class="mono">${st.id}</span> ${ok ? "✓" : "✗"} ` +
+      `<span class="hint">${escapeHtml(stageSummary(st))}</span>`;
+    if (!ok) li.style.color = "#ffb0b0";
+    el.diagStages.appendChild(li);
+  }
+  const inv = d.mapping?.invariants;
+  if (inv) {
+    el.diagInvariants.textContent = inv.ok
+      ? `源帧映射不变量全部通过：保留源帧严格递增、每个被替换帧映射到更早的保留源帧、显示时间覆盖片段（${fmt(inv.coverage.totalDisplay, 3)} / ${fmt(inv.coverage.span, 3)} 秒）。`
+      : `发现 ${inv.issues.length} 处不变量异常：` + inv.issues.map((x) => `[${x.stage}] ${x.code}`).join("；");
+    el.diagInvariants.style.color = inv.ok ? "" : "#ffb0b0";
+  }
+
+  // Static segments and phase transforms.
+  const ps = d.phaseStory || {};
+  const statics = ps.staticSegments || [];
+  const transforms = ps.phaseTransforms || [];
+  if (!statics.length && !transforms.length) {
+    el.diagPhaseStory.textContent = "未发现真实静止段或相位变换；节奏在整段内保持同一相位。";
+  } else {
+    const parts = [];
+    if (statics.length) {
+      parts.push(
+        `静止/超长段 ${statics.length} 个：` +
+          statics
+            .map((s) => `#${s.start}–#${s.end - 1}（${s.kind}，${fmt(s.duration, 2)} 秒）`)
+            .join("、"),
+      );
+    }
+    if (transforms.length) {
+      parts.push(
+        `相位变换 ${transforms.length} 次：` +
+          transforms
+            .map((t) => `#${t.atFrame} 相位 ${t.before}→${t.after}（原因：${transformCause(t.cause)}）`)
+            .join("、"),
+      );
+    }
+    el.diagPhaseStory.textContent = parts.join("；") + "。";
+  }
+
+  // Per-run deletion evidence chain; clicking a row seeks the player.
+  el.diagLinksBody.innerHTML = "";
+  const links = d.runLinks || [];
+  if (!links.length) {
+    el.diagLinksBody.innerHTML = '<tr><td colspan="7" class="hint">无区间。</td></tr>';
+  }
+  for (const l of links) {
+    const tr = document.createElement("tr");
+    if (l.staticContextAmbiguous) tr.className = "row-uncertain";
+    const cadence = l.cadence?.matched
+      ? `${l.deletionEvidence?.predicted ?? l.predicted ?? "?"} 次 · 相位 ${l.phase ?? "—"}/${l.period ?? "—"}`
+      : l.kind;
+    const det = l.detection
+      ? `${l.detection.confidentCopies} 复制 / ${l.detection.uncertainInternal} 不确定 / ${l.detection.changeInternal} 更新`
+      : "—";
+    const map = l.keptSourceFrame != null ? `保留源帧 #${l.keptSourceFrame}（丢弃 ${l.droppedInternal}）` : "全部保留";
+    const supportText = supportLabel(l.support);
+    tr.innerHTML = `<td class="mono">#${l.start}–#${l.end - 1}</td><td><span class="pill ${l.action}">${actionText(l.action)}</span></td><td class="mono">${cadence}</td><td class="mono">${det}</td><td class="mono support-${l.support}">${supportText}</td><td class="mono">${map}</td><td class="why">${escapeHtml(l.reason || l.conflict || "")}</td>`;
+    tr.addEventListener("click", () => seekTo(l.tStart));
+    el.diagLinksBody.appendChild(tr);
+  }
+
+  // Surface the phase-transform evidence on the same timeline the player uses.
+  state.diagPhaseFrames = transforms.map((t) => t.atFrame);
+}
+
+function stageSummary(st) {
+  if (st.id === "classify") return `证据 ${st.outputs.evidence}，阈值 ${fmt(st.outputs.threshold, 2)}`;
+  if (st.id === "runs") return `区间 ${st.outputs.runs}`;
+  if (st.id === "fit") return `最佳 ${st.outputs.best ?? "—"}${st.outputs.ambiguous ? "（多解）" : ""}`;
+  if (st.id === "decide") return `保留 ${st.outputs.kept} / 帧 ${st.outputs.frames}，删除 ${st.outputs.drops}`;
+  return "";
+}
+
+function transformCause(cause) {
+  return (
+    { "static-hold": "真实静止保持", "unexplained-long": "无法解释的超长不变段", "phase-shift": "相位重排" }[cause] ||
+    cause
+  );
+}
+
+function supportLabel(s) {
+  return (
+    {
+      "detection+cadence": "检测+节奏",
+      "cadence-only": "仅节奏",
+      "static-duration": "静止时长",
+      insufficient: "证据不足",
+      keep: "保留",
+    }[s] || s
+  );
+}
+
 function framePill(a) {
   return a === "drop" ? "drop-copies" : a === "drop-static" ? "keep-static" : a === "keep-uncertain" ? "keep-uncertain" : "keep";
 }
+
 function frameText(a) {
   return (
     { keep: "保留", drop: "丢弃（复制）", "drop-static": "静止内相同画面", "keep-uncertain": "保留（不确定）" }[a] || a
@@ -940,6 +1128,23 @@ function drawTimeline(playhead = null) {
       const x = padX + ((k.time - seg.start) / span) * (w - padX * 2);
       tlCtx.fillRect(x, trackY + trackH - 6, 1.5, 6);
     }
+    // phase-transform markers from the read-only trace: a cadence that reset its
+    // phase mid-clip is where a static hold is most likely being read as copies.
+    const transformFrames = new Set((a.diagnosis?.phaseStory?.phaseTransforms || []).map((t) => t.atFrame));
+    if (transformFrames.size) {
+      tlCtx.strokeStyle = "rgba(240,180,41,0.9)";
+      tlCtx.lineWidth = 1.5;
+      tlCtx.setLineDash([3, 2]);
+      for (const k of a.kept) {
+        if (!transformFrames.has(k.sourceFrame)) continue;
+        const x = padX + ((k.time - seg.start) / span) * (w - padX * 2);
+        tlCtx.beginPath();
+        tlCtx.moveTo(x, trackY - 2);
+        tlCtx.lineTo(x, trackY + trackH + 2);
+        tlCtx.stroke();
+      }
+      tlCtx.setLineDash([]);
+    }
   } else {
     tlCtx.fillStyle = "rgba(74,163,255,0.25)";
     tlCtx.fillRect(padX, trackY, w - padX * 2, trackH);
@@ -1012,7 +1217,8 @@ function applyResult(res) {
       const tr = document.createElement("tr");
       const actualPts = outputFrames[i]?.pts;
       const phase = k.phase != null && k.period ? `${k.phase}/${k.period}` : "—";
-      tr.innerHTML = `<td>#${k.sourceFrame}</td><td>${fmt(k.time, 3)}</td><td>${fmt(k.displayStart, 3)}</td><td>${fmt(k.displayEnd, 3)}</td><td class="dur">${fmt(k.displayDuration, 3)} s</td><td class="mono">${phase}</td><td>${actualPts != null ? `<span class="mono">${fmt(actualPts, 3)}</span>` : "—"}</td>`;
+      const reason = escapeHtml(k.reason || (k.action === "keep-static" ? "真实静止保留时长" : "保留源帧"));
+      tr.innerHTML = `<td>#${k.sourceFrame}</td><td>${fmt(k.time, 3)}</td><td>${fmt(k.displayStart, 3)}</td><td>${fmt(k.displayEnd, 3)}</td><td class="dur">${fmt(k.displayDuration, 3)} s</td><td class="mono">${phase}</td><td class="why">${reason}</td><td>${actualPts != null ? `<span class="mono">${fmt(actualPts, 3)}</span>` : "—"}</td>`;
       el.keptBody.appendChild(tr);
     }
   }

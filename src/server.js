@@ -14,6 +14,7 @@ import {
   formatTime,
 } from "./util/media.js";
 import { analyzeMedia, normalizeSegment } from "./analysis/pipeline.js";
+import { traceLogLines } from "./analysis/trace.js";
 import { renderRecovered, sanitizeName } from "./util/render.js";
 import { RHYTHM_PRESETS } from "./analysis/cadence.js";
 import { buildAllFixtures, fixtureSpecs } from "../test/fixtures.js";
@@ -648,7 +649,51 @@ function publicAnalysis(result, media, file, mediaId, segment) {
     timeline: buildTimelinePayload({ frameTimes }, decisions, fit),
     notes: summary.notes,
     warnings: summary.warnings,
+    diagnosis: buildDiagnosisPayload(result.trace),
     elapsedMs: null,
+  };
+}
+
+/**
+ * Public, bounded slice of the read-only cadence trace. The full trace stays
+ * server-side; the UI gets the evidence chain, candidate support, per-run links,
+ * phase story and the root-cause verdict needed to explain "static vs copies".
+ */
+function buildDiagnosisPayload(trace) {
+  if (!trace) return null;
+  return {
+    readOnly: trace.readOnly,
+    rootCause: trace.rootCause,
+    summary: trace.summary,
+    stages: trace.stages,
+    candidates: trace.candidates.map((c) => ({
+      presetId: c.presetId,
+      label: c.label,
+      sourceFps: c.sourceFps,
+      ratio: c.ratio,
+      pattern: c.pattern,
+      maxPred: c.maxPred,
+      period: c.period,
+      isBest: c.isBest,
+      support: c.support,
+      impliedMapping: c.impliedMapping,
+      phaseSegments: c.phaseSegments,
+    })),
+    phaseStory: trace.phaseStory,
+    pathComparison: trace.pathComparison,
+    runLinks: trace.runLinks,
+    runLinksTotal: trace.runLinksTotal,
+    runLinksOmitted: trace.runLinksOmitted,
+    dropEvidence: trace.dropEvidence,
+    mapping: trace.mapping,
+    similarity: {
+      evidence: trace.similarity.evidence,
+      counts: trace.similarity.counts,
+      sampleTotal: trace.similarity.sampleTotal,
+      omitted: trace.similarity.omitted,
+    },
+    budget: trace.budget,
+    logLines: traceLogLines(trace),
   };
 }
 

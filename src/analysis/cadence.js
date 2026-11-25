@@ -509,6 +509,18 @@ export function decideFrames({ runs, fit, transitions, frameTimes, options = {} 
   const period = best?.period ?? 1;
   const runDecisions = [];
 
+  // Map each run to the fitted phase segment it was matched inside. A phase
+  // change between segments is only legitimate across a proven static hold;
+  // elsewhere it means the model re-stitched its phase and is suspect.
+  const runSegment = new Map();
+  if (best && Array.isArray(best.segments)) {
+    best.segments.forEach((seg, segmentIndex) => {
+      for (const entry of seg.runs || []) {
+        if (entry?.run) runSegment.set(entry.run.id, { segmentIndex, offset: seg.offset });
+      }
+    });
+  }
+
   for (const run of runs) {
     const meta = best?.runMeta?.get(run.id);
     const kind = meta?.kind ?? "unmatched";
@@ -516,6 +528,7 @@ export function decideFrames({ runs, fit, transitions, frameTimes, options = {} 
     const isStatic = kind === "static";
     const uncertainOpening = run.uncertainOpening;
     const opening = run.opening;
+    const segInfo = runSegment.get(run.id) ?? null;
     // Transitions inside the run decide whether the frames really are copies.
     // If any of them lacks evidence, the whole run must be preserved.
     let internalUncertain = 0;
@@ -573,6 +586,34 @@ export function decideFrames({ runs, fit, transitions, frameTimes, options = {} 
       confidence = 0.2;
     }
 
+    const boundaryMedians = [];
+    const idx = run.id;
+    for (const j of [idx - 2, idx - 1, idx + 1, idx + 2]) {
+      const other = runs[j];
+      if (!other || other.start === 0) continue;
+      const tr = transitions[other.start];
+      if (tr && Number.isFinite(tr.diffMean)) boundaryMedians.push(tr.diffMean);
+    }
+    const neighbourhoodMedian = boundaryMedians.length >= 3 ? median(boundaryMedians) : null;
+
+    const deletionEvidence =
+      action === "drop-copies"
+        ? {
+            runLength: run.length,
+            predicted: pred,
+            phase: meta?.phase ?? null,
+            period,
+            boundary: Boolean(meta?.boundary),
+            boundaryAdjusted: Boolean(meta?.boundary),
+            segmentIndex: segInfo?.segmentIndex ?? null,
+            segmentOffset: segInfo?.offset ?? null,
+            neighbourMedianDiff:
+              neighbourhoodMedian != null && Number.isFinite(neighbourhoodMedian)
+                ? Math.round(neighbourhoodMedian * 1000) / 1000
+                : null,
+          }
+        : null;
+
     runDecisions.push({
       id: run.id,
       start: run.start,
@@ -587,6 +628,9 @@ export function decideFrames({ runs, fit, transitions, frameTimes, options = {} 
       isStatic,
       kind,
       isBoundary: meta?.boundary ?? false,
+      segmentIndex: segInfo?.segmentIndex ?? null,
+      segmentOffset: segInfo?.offset ?? null,
+      deletionEvidence,
       action,
       confidence,
       reason,

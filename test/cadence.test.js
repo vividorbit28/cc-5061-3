@@ -9,6 +9,7 @@ import { analyzeMedia } from "../src/analysis/pipeline.js";
 import { renderRecovered } from "../src/util/render.js";
 import { probeMedia, FFPROBE, OUTPUT_DIR } from "../src/util/media.js";
 import { readBarcodes, buildAllFixtures } from "./fixtures.js";
+import { traceLogLines, buildCadenceTrace } from "../src/analysis/trace.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -16,7 +17,17 @@ const run = promisify(execFile);
 const SAMPLE_DIR = path.resolve(import.meta.dirname, "..", "data", "samples");
 
 // Fixtures live under data/ (gitignored): generate any that are missing.
-const REQUIRED = ["alt23", "alt23_static", "alt23_noisy", "pulldown2430", "const3", "native30", "static_only"];
+const REQUIRED = [
+  "alt23",
+  "alt23_static",
+  "alt23_noisy",
+  "pulldown2430",
+  "const3",
+  "native30",
+  "static_only",
+  "splice_static",
+  "splice_motion",
+];
 if (REQUIRED.some((n) => !fs.existsSync(path.join(SAMPLE_DIR, `${n}.mp4`)) || !fs.existsSync(path.join(SAMPLE_DIR, `${n}.json`)))) {
   await buildAllFixtures();
 }
@@ -200,6 +211,108 @@ test("alt23_noisy: 压缩噪声下复制帧不逐像素相同，仍按证据恢�
   assert.ok(median(dupDiff) < median(updateDiff) / 4, "复制帧差异应显著低于更新帧");
   assert.equal(result.summary.sourceFps, 12);
   assert.deepEqual(result.summary.pattern, [2, 3]);
+});
+
+test("节奏推断追踪：只读、有界、旧样例结论不伪报", async () => {
+  const cases = ["alt23", "alt23_static", "alt23_noisy", "pulldown2430", "const3", "native30"];
+  for (const name of cases) {
+    const file = videoPath(name);
+    const result = await analyzeMedia(file);
+    const trace = result.trace;
+    assert.ok(trace, `${name}: 应生成追踪`);
+    assert.equal(trace.readOnly, true, `${name}: 追踪必须声明只读`);
+
+    // The trace must not have changed the decisions it was handed: rebuilding
+    // it from the same analysis yields identical drop/keep sets, and the frame
+    // decisions are byte-for-byte the ones the pipeline produced.
+    const rebuild = buildCadenceTrace({
+      media: result.media,
+      decoded: result.decoded,
+      frameTimes: result.frameTimes,
+      pairwise: result.frameTimes.map(() => ({})),
+      classification: result.classification,
+      runs: result.runs,
+      fit: result.fit,
+      decisions: result.decisions,
+      segment: result.segment,
+    });
+    assert.deepEqual(
+      rebuild.runLinks.map((l) => [l.runId, l.action]),
+      trace.runLinks.map((l) => [l.runId, l.action]),
+      `${name}: 追踪重建后区间决策不变`,
+    );
+
+    // A clean fixture must be reported as sufficient, not silently flagged.
+    assert.equal(trace.summary.category, "sufficient", `${name}: ${trace.summary.code}`);
+    assert.equal(trace.mapping.invariants.ok, true, `${name}: 源帧映射不变量应通过`);
+
+    // Log cost is bounded and every line is a string.
+    const lines = traceLogLines(trace, 50);
+    assert.ok(lines.length <= 50, `${name}: 日志行数有界`);
+    assert.ok(lines.every((l) => typeof l === "string"));
+  }
+});
+
+test("对照素材：静止保持被误当复制 = 观测不足，真实运动 = 证据充足", async () => {
+  const staticResult = await analyzeMedia(videoPath("splice_static"));
+  const motionResult = await analyzeMedia(videoPath("splice_motion"));
+
+  // Same declared cadence and splice; the engine even drops the same frames in
+  // both. That is precisely why timing alone cannot tell them apart.
+  assert.equal(staticResult.summary.sourceFps, 24);
+  assert.equal(motionResult.summary.sourceFps, 24);
+  assert.deepEqual(staticResult.summary.pattern, [1, 1, 1, 2]);
+  assert.deepEqual(motionResult.summary.pattern, [1, 1, 1, 2]);
+  const dropsOf = (r) => r.decisions.frames.filter((f) => f.action === "drop").map((f) => f.index);
+  assert.deepEqual(dropsOf(staticResult), dropsOf(motionResult), "两种素材的删除时间点一致");
+
+  // The diagnosis must distinguish them: the static-hold variant is an
+  // observation limit (static vs copies), never presented as confirmed cadence.
+  assert.equal(staticResult.trace.summary.category, "insufficient-observation");
+  assert.equal(staticResult.trace.summary.code, "static-vs-copies");
+  assert.ok(
+    staticResult.trace.phaseStory.phaseTransforms.some((t) => t.cause !== "static-hold"),
+    "静止保持变体应在非静止边界处出现相位重拟合",
+  );
+  assert.equal(staticResult.trace.mapping.invariants.ok, true);
+
+  // The motion variant is a genuine periodic copy pattern.
+  assert.equal(motionResult.trace.summary.category, "sufficient");
+  assert.equal(motionResult.trace.summary.code, "cadence-confirmed");
+});
+
+test("全静止素材：追踪归为观测不足而非实现误判", async () => {
+  const result = await analyzeMedia(videoPath("static_only"));
+  assert.equal(result.trace.summary.category, "insufficient-observation");
+  assert.equal(result.trace.summary.code, "all-static");
+  assert.equal(result.trace.mapping.invariants.ok, true);
+  // No frame is dropped by an "all-static" trace.
+  assert.equal(result.trace.pathComparison.cadenceBack.drops, 0);
+});
+
+test("追踪日志成本有界（大素材上限受控）", async () => {
+  const result = await analyzeMedia(videoPath("alt23_static"));
+  const trace = result.trace;
+  const full = buildCadenceTrace(
+    {
+      media: result.media,
+      decoded: result.decoded,
+      frameTimes: result.frameTimes,
+      pairwise: [],
+      classification: result.classification,
+      runs: result.runs,
+      fit: result.fit,
+      decisions: result.decisions,
+      segment: result.segment,
+    },
+    { budget: { maxTransitions: 5, maxRunLinks: 3, maxMapping: 4, maxDropEvidence: 2, maxLogLines: 12 } },
+  );
+  assert.ok(full.runLinks.length <= 3, "区间链接受预算限制");
+  assert.ok(full.dropEvidence.sample.length <= 2, "删除证据受预算限制");
+  assert.ok(traceLogLines(full, 12).length <= 12, "日志行数受预算限制");
+  // Sampled counts must still report the true totals.
+  assert.equal(full.runLinksTotal, trace.runLinksTotal);
+  assert.equal(full.dropEvidence.total, trace.dropEvidence.total);
 });
 
 test("alt23: 重封装保留原事件时间、音轨比特一致", async () => {

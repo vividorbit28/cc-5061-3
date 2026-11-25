@@ -113,6 +113,7 @@
               <span><i class="sw drop"></i>复制的重复帧</span>
               <span><i class="sw static"></i>真实静止（保留时长）</span>
               <span><i class="sw uncertain"></i>不确定（保留）</span>
+              <span><i class="sw phase"></i>相位变换（追踪标记）</span>
             </div>
           </div>
           <div class="controls">
@@ -217,6 +218,60 @@
         </details>
       </section>
 
+      <section class="panel" id="diagnosis-panel">
+        <div class="panel-head">
+          <h2>节奏推断追踪与复制模式诊断</h2>
+          <span id="diag-tag" class="tag">未分析</span>
+        </div>
+        <div class="diag-verdict" id="diag-verdict">
+          <p id="diag-category">尚未分析。</p>
+          <p class="hint" id="diag-detail">追踪只读取分析结果，不会自行删除帧或改变待分析序列。</p>
+        </div>
+        <div class="diag-compare">
+          <div class="diag-path">
+            <h3>检测端复制证据</h3>
+            <p class="hint" id="diag-detect-rule">—</p>
+            <div class="diag-counts" id="diag-detect-counts">—</div>
+          </div>
+          <div class="diag-arrow" aria-hidden="true">⇄</div>
+          <div class="diag-path">
+            <h3>从恢复节奏反推候选删帧</h3>
+            <p class="hint" id="diag-cadence-rule">—</p>
+            <div class="diag-counts" id="diag-cadence-counts">—</div>
+          </div>
+        </div>
+        <div class="diag-agreement" id="diag-agreement"></div>
+        <div class="evidence-grid">
+          <div>
+            <h3>候选支持（阶段与源帧映射）</h3>
+            <div class="runs-table-wrap">
+              <table class="runs-table diag-cand-table">
+                <thead><tr><th>假设</th><th>模式</th><th>得分</th><th>相位段</th><th>隐含保留/删除</th></tr></thead>
+                <tbody id="diag-cand-body"><tr><td colspan="5" class="hint">—</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3>执行证据链（阶段 / 不变量）</h3>
+            <ul id="diag-stages" class="notes"></ul>
+            <p class="hint" id="diag-invariants">—</p>
+          </div>
+        </div>
+        <div class="diag-static" id="diag-static-block">
+          <h3>静止段与相位变换（区分原因）</h3>
+          <div id="diag-phase-story" class="hint">—</div>
+        </div>
+        <details class="frame-details" id="diag-links-wrap">
+          <summary>逐区间删除证据（检测 / 节奏 / 源帧映射）</summary>
+          <div class="runs-table-wrap tall">
+            <table class="runs-table diag-links-table">
+              <thead><tr><th>区间</th><th>处理</th><th>节奏</th><th>内部复制证据</th><th>支撑</th><th>源帧映射</th><th>说明</th></tr></thead>
+              <tbody id="diag-links-body"><tr><td colspan="7" class="hint">尚未分析。</td></tr></tbody>
+            </table>
+          </div>
+        </details>
+      </section>
+
       <section class="panel" id="result-panel">
         <div class="panel-head">
           <h2>恢复结果</h2>
@@ -254,8 +309,8 @@
           <h3>保留帧与实际播放时间（按运算结果）</h3>
           <div class="runs-table-wrap tall">
             <table class="runs-table kept-table">
-              <thead><tr><th>源帧号</th><th>原事件时间</th><th>显示开始</th><th>显示结束</th><th>显示时长</th><th>相位</th><th>输出实测 PTS</th></tr></thead>
-              <tbody id="kept-body"><tr><td colspan="7" class="hint">尚未生成结果。</td></tr></tbody>
+              <thead><tr><th>源帧号</th><th>原事件时间</th><th>显示开始</th><th>显示结束</th><th>显示时长</th><th>相位</th><th>对应原因</th><th>输出实测 PTS</th></tr></thead>
+              <tbody id="kept-body"><tr><td colspan="8" class="hint">尚未生成结果。</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -271,6 +326,8 @@
       <li>“分析节奏”会逐帧计算差异、空间结构与运动补偿增益，拟合声明的节奏类型，并标出静止停顿与不确定区。</li>
       <li>“恢复并重封装”按原时间戳保留每个源帧，丢弃复制的重复帧；原音轨流复制写入，声音与画面事件时间保持对应。</li>
       <li>若画面全静止或证据不足，会保留多解节奏与完整时长，不会把静止时间压缩掉。</li>
+      <li>“节奏推断追踪与复制模式诊断”只读取分析结果（不删除帧、不改变待分析序列）：它对比“检测端复制证据”和“从恢复节奏反推的候选删帧”，把结论分为证据充足、观测不足（静态保持与复制在像素上不可分）或实现误判，并把删除依据、候选支持与源帧映射列到每个区间。</li>
+      <li>时间轴上的橙色虚线是追踪标出的相位变换位置——节奏在此处重排时，正是静止保持可能被当作复制的地方。点击诊断表或时间轴可联动播放器定位。</li>
       <li>输出并非仅修改容器帧率标签：视频逐帧按原 PTS 重编码，时间戳等于原片中的事件时间。</li>
     </ul>
     <p class="hint">命令行仅辅助节奏恢复与批处理，图形入口是本页面（详见 README）。</p>

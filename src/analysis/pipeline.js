@@ -8,6 +8,7 @@ import {
   presetById,
   RHYTHM_PRESETS,
 } from "./cadence.js";
+import { buildCadenceTrace } from "./trace.js";
 
 /**
  * Analyse a media file (or a [start,end) segment of it) and produce:
@@ -88,6 +89,24 @@ export async function analyzeMedia(file, options = {}) {
     options: { keepUncertain },
   });
 
+  // Read-only evidence chain: trace how the cadence was inferred and where a
+  // static hold could be mistaken for a copy pattern. Building it never changes
+  // the decisions above (the trace takes decisions as fixed input).
+  const trace = buildCadenceTrace(
+    {
+      media,
+      decoded,
+      frameTimes,
+      pairwise,
+      classification,
+      runs,
+      fit,
+      decisions,
+      segment: { start: decoded.segStart, end: decoded.segEnd },
+    },
+    { budget: options.traceBudget },
+  );
+
   if (onProgress) onProgress({ phase: "done", progress: 1 });
 
   const frameTimesAll = frameTimes;
@@ -120,6 +139,7 @@ export async function analyzeMedia(file, options = {}) {
     runs,
     fit,
     decisions,
+    trace,
     summary,
     options: { presetId, keepUncertain, minStaticDuration: minStaticDuration ?? null },
   };

@@ -18,6 +18,7 @@ import { analyzeMedia, normalizeSegment } from "../src/analysis/pipeline.js";
 import { probeMedia, OUTPUT_DIR, ensureDirs } from "../src/util/media.js";
 import { renderRecovered, sanitizeName } from "../src/util/render.js";
 import { RHYTHM_PRESETS } from "../src/analysis/cadence.js";
+import { traceLogLines } from "../src/analysis/trace.js";
 
 const HELP = `逐行重复帧节奏恢复 —— 命令辅助
 
@@ -71,6 +72,10 @@ function formatResult(result, file) {
     lines.push("提示：");
     for (const w of s.warnings) lines.push(`  ! ${w}`);
   }
+  if (result.trace) {
+    lines.push("节奏推断追踪与复制模式诊断：");
+    for (const l of traceLogLines(result.trace, 40)) lines.push(`  ${l}`);
+  }
   lines.push("处理的区间（前 20 个）：");
   for (const r of result.decisions.runDecisions.slice(0, 20)) {
     lines.push(
@@ -98,6 +103,17 @@ async function cmdAnalyze(file, opts) {
       file,
       segment: result.segment,
       summary: result.summary,
+      diagnosis: result.trace
+        ? {
+            rootCause: result.trace.rootCause,
+            summary: result.trace.summary,
+            candidates: result.trace.candidates,
+            phaseStory: result.trace.phaseStory,
+            pathComparison: result.trace.pathComparison,
+            mapping: result.trace.mapping,
+            logLines: traceLogLines(result.trace),
+          }
+        : null,
       runs: result.decisions.runDecisions,
       kept: result.decisions.kept,
     };

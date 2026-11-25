@@ -153,6 +153,8 @@ export async function renderRecovered({
     action: k.action,
     phase: k.phase ?? null,
     period: k.period ?? null,
+    confidence: k.confidence ?? null,
+    reason: k.reason ?? null,
   }));
   return {
     outputPath,

@@ -413,6 +413,34 @@ const FIXTURES = [
     staticRanges: [[0, 35]],
     beepSourceFrames: [6, 18, 30],
   },
+  {
+    name: "splice_static",
+    title: "24→30 剪接后静止保持（静止易被当复制）",
+    description:
+      "按 1,1,1,2 复制到 30 fps，第 8 源帧处一次剪接；剪接后源帧 8–10 画面相同（真实静止保持），像素上与其周围的复制重复完全一致。用于对照“静止镜头被误当周期复制”。",
+    sourceFps: 24,
+    highFps: 30,
+    sourceCount: 30,
+    pattern: [1, 1, 1, 2],
+    noise: 0,
+    staticRanges: [],
+    keyOverrides: { 8: 600, 9: 600, 10: 600 },
+    beepSourceFrames: [4, 12, 20, 28],
+  },
+  {
+    name: "splice_motion",
+    title: "24→30 剪接后继续运动（对照）",
+    description:
+      "与 splice_static 相同的复制节奏与剪接位置，但剪接后源帧 8–10 逐帧更新；仅缺少“静态保持”这一因素，用于区分观测不足与实现误判。",
+    sourceFps: 24,
+    highFps: 30,
+    sourceCount: 30,
+    pattern: [1, 1, 1, 2],
+    noise: 0,
+    staticRanges: [],
+    keyOverrides: { 8: 600 },
+    beepSourceFrames: [4, 12, 20, 28],
+  },
 ];
 
 export async function buildFixture(spec) {
@@ -421,7 +449,9 @@ export async function buildFixture(spec) {
   const map = buildUpsampleMap(spec.sourceCount, spec.pattern);
   const duration = map.length / spec.highFps;
   const uniqueContent = new Map(); // contentKey -> Buffer
+  const keyOverrides = spec.keyOverrides || {};
   const contentKeyFor = (sourceIndex) => {
+    if (Object.prototype.hasOwnProperty.call(keyOverrides, sourceIndex)) return keyOverrides[sourceIndex];
     for (const [a, b] of spec.staticRanges) {
       if (sourceIndex >= a && sourceIndex <= b) return a;
     }
